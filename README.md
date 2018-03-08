@@ -58,15 +58,9 @@ In the `build.sbt`, settings as bellow can be configured.
 publishTo in ThisBuild := Some {
   import Resolver.mavenStylePatterns
 
-  def localRepo = {
-    // Fallback to publish in a temporary subdir of the project
-    val root = new java.io.File(".")
-    root / "target" / "local-repo"
-  }
-
   val repoDir = sys.env.get("REPO_PATH").map { path =>
     new java.io.File(path)
-  }.getOrElse(localRepo)
+  }.getOrElse(sys.error("REPO_PATH is not set"))
 
   Resolver.file("repo", repoDir)
 }
@@ -83,4 +77,10 @@ export REPO_PATH=/path/to/entrepot/snapshots/
 
 # in project directory with the configured build.sbt
 sbt publish
+
+# Push the publication
+cd /path/to/entrepot/
+git add snapshots/
+git commit -m "Publish X"
+git push
 ```

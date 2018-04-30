@@ -84,3 +84,27 @@ git add snapshots/
 git commit -m "Publish X"
 git push
 ```
+
+### Badges
+
+Informational badges about the latest version for a publish artifact can be added on the source project.
+
+**Using markdown:**
+
+For an artifact published in `releases` the following markdown can be used:
+
+```
+[![Zen Entrepot](https://zen-entrepot.nestincloud.io/entrepot/shields/releases/${a_group}/{an_artifact}.{image_ext})](https://zen-entrepot.nestincloud.io/entrepot/pom/releases/${a_group}/{an_artifact})
+```
+
+- `a_group` is the groupId, with `/` as separator instead of `.` (e.g. `com/zengularity`)
+- `an_artifact` is the artifactId, with `_{scalaBinaryVersion}` (e.g. `_2.12`) for Scala artifacts (e.g. `benji-core_2.12`)
+- `image_ext` is the image extension (`svg`, `png`, ...)
+
+e.g.: [![Zen Entrepot](https://zen-entrepot.nestincloud.io/entrepot/shields/releases/com/zengularity/benji-core_2.12.svg)](https://zen-entrepot.nestincloud.io/entrepot/pom/releases/com/zengularity/benji-core_2.12)
+
+```
+[![Zen Entrepot](https://zen-entrepot.nestincloud.io/entrepot/shields/releases/com/zengularity/benji-core_2.12.svg)](https://zen-entrepot.nestincloud.io/entrepot/pom/releases/com/zengularity/benji-core_2.12)
+```
+
+For a snapshot badge, just replace `releases` by `snapshots`.

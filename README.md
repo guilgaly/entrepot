@@ -14,8 +14,14 @@ Utility webapp for Zengularity Entrepot.
 
 **Developpement:**
 
-    go run src/server/server.go
+    go run src/server/*.go
 
 **NIC:**
 
+First prepare the distribution:
+
     ./nic-build.sh
+
+Then deploy a pre-built release on NIC:
+
+![NIC deploy](./docs/nic-release.gif)

@@ -1,4 +1,4 @@
-#! /bin/sh
+#! /bin/bash
 
 set -e
 
@@ -14,8 +14,11 @@ if [ ! -d "$DIR/dist" ]; then
 fi
 
 # Build
-GOPATH=$DIR/src/server/ GOOS=linux GOARCH=386 go build -v -o "$DIR/dist/server" "$DIR/src/server/server.go"
+GOPATH=$DIR/src/server/ GOOS=linux GOARCH=386 go build -v -o "$DIR/dist/server" "$DIR"/src/server/*.go
+
+# Copy resources
 cp "$DIR/src/Procfile" "$DIR/dist/"
+cp -R "$DIR/resources" "$DIR/dist/resources/"
 
 # Archive
 cd "$DIR/dist"

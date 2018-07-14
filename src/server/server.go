@@ -2,110 +2,109 @@ package main
 
 import (
 	"fmt"
+	"flag"
 	"io"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
 	"encoding/json"
+	"text/template"
 )
 
-func main() {
-	addr := ":9000"
+type Context struct {
+	Address *string
+	GithubUser *string
+	GithubRepository *string
+	PomTemplate *string
+}
 
-	if len(os.Args) > 1 {
-		addr = os.Args[1]
+func main() {
+	ctx := Context {
+		flag.String("bind", ":9000", "address to bind"),
+		flag.String("githubUser", "zengularity",
+			"GitHub user name (or organization)"),
+		flag.String("githubRepository", "entrepot",
+			"GitHub repository (not prefixed by the user)"),
+		flag.String("pomTemplate", "./resources/pom.html.tmpl",
+			"Path to template for the POM display") }
+
+	flag.Parse()
+
+	if !flag.Parsed() {
+		os.Exit(1)
+		return
 	}
 
-	fmt.Printf(`# Entrepot utility
+	// ---
 
-Bound to %s
+	addr := *ctx.Address
+
+	tmpl, err1 := template.New("started").Parse(`
+# GitHub as Maven repository
+
+Bound to {{.Address}}
 
 Routes:
-- GET /shields/(releases|snapshots)/**.ex) => serve shield
-- GET /pom/(releases|snapshots)/** => serve POM
-`, addr)
 
-	http.HandleFunc("/", handler)
+  GET /{{.GithubRepository}}/shields/(releases|snapshots)/{a_group}/{an_artifact}.{ext}
+  => Serve informational shields indicating the latest version
+     for the managed dependencies.
+
+  GET /{{.GithubRepository}}/pom/(releases|snapshots)/{a_group}/{an_artifact}
+  => Serve HTML guide about how to use the specified dependency.
+
+  GET /{{.GithubRepository}}/javadoc/(releases|snapshots)/{a_group}/{an_artifact}/{version}!/path/inside/javadoc-jar/file.ext
+  => Serve the contents from the Javadoc JAR
+
+  Placeholders:
+
+  - a_group: Maven groupId, with / as separator (not .)
+  - an_artifact: Maven artifactId, ended with _{scalaBinary} 
+    for the Scala dependencies (e.g. benji-core_2.12)
+  - ext: File extension for the shield image (e.g. svg, png)
+
+`)
+
+	if err1 == nil {
+		tmpl.Execute(os.Stdout, ctx)
+	}
+
+	http.HandleFunc("/", handler(&ctx))
 	http.ListenAndServe(addr, nil)
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	path := r.URL.Path
+func handler(ctx *Context) func(http.ResponseWriter, *http.Request) {
+	shieldsPrefix := fmt.Sprintf("/%s/shields/", *ctx.GithubRepository)
+	pomPrefix := fmt.Sprintf("/%s/pom/", *ctx.GithubRepository)
+	javadocPrefix := fmt.Sprintf("/%s/javadoc/", *ctx.GithubRepository)
 
-	if method == "GET" && strings.Index(path, "/entrepot/shields/") == 0 {
-		shield(w, r)
-		return
-	}
-
-	if method == "GET" && strings.Index(path, "/entrepot/pom") == 0 {
-		pom(w, r)
-		return
-	}
-
-	// ---
-
-	badRequest(w, fmt.Sprintf("Bad request: %s %s\n", method, path))
-}
-
-func latestVersion(
-	category string,
-	dependencyPath string) (version string, err error) {
-
-	githubApiUrl := fmt.Sprintf("https://api.github.com/repos/zengularity/entrepot/contents/%s/%s", category, dependencyPath)
-
-	githubResp, err1 := http.Get(githubApiUrl)
-
-	if err1 != nil {
-		return "", err1
-	}
-
-	// ---
-
-	defer githubResp.Body.Close()
-
-	dec := json.NewDecoder(githubResp.Body)
-	_, err2 := dec.Token()
-
-	if err2 != nil {
-		return "", err2
-	}
-
-	// ---
-
-	var latest string = "0"
-
-	for dec.More() {
-		var info interface{}
-
-		err3 := dec.Decode(&info)
-
-		if err3 != nil {
-			return "", err3
+	return func(w http.ResponseWriter, r *http.Request) {
+		method := r.Method
+		path := r.URL.Path
+		
+		if method == "GET" && strings.Index(path, shieldsPrefix) == 0 {
+			shield(w, r, ctx)
+			return
+		}
+		
+		if method == "GET" && strings.Index(path, pomPrefix) == 0 {
+			pom(w, r, ctx)
+			return
+		}
+		
+		if method == "GET" && strings.Index(path, javadocPrefix) == 0 {
+			javadoc(w, r, ctx)
+			return
 		}
 
 		// ---
-
-		obj := info.(map[string]interface{})
-		name := obj["name"].(string)
-
-		if strings.Compare(latest, name) < 0 {
-			latest = name
-		}
+		
+		badRequest(w, fmt.Sprintf("Bad request: %s %s\n", method, path))
 	}
-
-	_, err4 := dec.Token()
-
-	if err4 != nil {
-		return "", err4
-	}
-
-	// ---
-
-	return latest, nil
 }
 
-func shield(w http.ResponseWriter, r *http.Request) {
+func shield(w http.ResponseWriter, r *http.Request, ctx *Context) {
 	path := r.URL.Path
 	dot := strings.LastIndex(path, ".")
 
@@ -137,7 +136,7 @@ func shield(w http.ResponseWriter, r *http.Request) {
 	// ---
 
 	dependencyPath := strings.Join(components[4:], "/")
-	latest, err1 := latestVersion(category, dependencyPath)
+	latest, err1 := latestVersion(ctx, category, dependencyPath)
 
 	if err1 != nil {
 		writeError(w, err1)
@@ -152,16 +151,7 @@ func shield(w http.ResponseWriter, r *http.Request) {
 
 	// ---
 
-	version := strings.Replace(latest, "-", "--", -1)
-	color := "blue"
-
-	if category == "releases" {
-		color = "green"
-	}
-
-	shieldUrl := fmt.Sprintf("https://img.shields.io/badge/entrepot-%s-%s.%s", version, color, ext)
-
-	shieldResp, err5 := http.Get(shieldUrl)
+	shieldResp, err5 := http.Get(shieldUrl(ctx, category, latest, ext))
 	
 	if err5 != nil {
 		writeError(w, err5)
@@ -170,128 +160,104 @@ func shield(w http.ResponseWriter, r *http.Request) {
 
 	defer shieldResp.Body.Close()
 
+	forward(w, shieldResp)
+}
+
+func shieldUrl(
+	ctx *Context,
+	category string,
+	latest string,
+	ext string) string {
+
+	version := strings.Replace(latest, "-", "--", -1)
+	color := "blue"
+
+	if category == "releases" {
+		color = "green"
+	}
+
+	return fmt.Sprintf("https://img.shields.io/badge/%s-%s-%s.%s",
+		*ctx.GithubRepository, version, color, ext)
+}
+
+func latestVersion(
+	ctx *Context,
+	category string,
+	dependencyPath string) (version string, err error) {
+
+	githubApiUrl := fmt.Sprintf(
+		"https://api.github.com/repos/%s/%s/contents/%s/%s",
+		*ctx.GithubUser, *ctx.GithubRepository,
+		category, dependencyPath)
+
+	githubResp, err1 := http.Get(githubApiUrl)
+
+	if err1 != nil {
+		return "", err1
+	}
+
+	// ---
+
+	defer githubResp.Body.Close()
+
+	dec := json.NewDecoder(githubResp.Body)
+	if _, err := dec.Token(); err != nil {
+		return "", err
+	}
+
+	// ---
+
+	var latest string = "0"
+
+	for dec.More() {
+		var info interface{}
+
+		if err := dec.Decode(&info); err != nil {
+			return "", err
+		}
+
+		// ---
+
+		obj, ok := info.(map[string]interface{})
+
+		if !ok {
+			return "",
+			errors.New("JSON value is not expected object")
+		}
+
+		// ---
+
+		name := obj["name"].(string)
+
+		if strings.Compare(latest, name) < 0 {
+			latest = name
+		}
+	}
+
+	if _, err := dec.Token(); err != nil {
+		return "", err
+	}
+
+	// ---
+
+	return latest, nil
+}
+
+func forward(w http.ResponseWriter, resp* http.Response) {
 	// Forward headers
 	headers := w.Header()
 
-	for name, vs := range shieldResp.Header {
+	for name, vs := range resp.Header {
 		for _, v := range vs {
 			headers.Add(name, v)
 		}
 	}
 
 	// Forward body
-	io.Copy(w, shieldResp.Body)
-}
-
-func pom(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	components := strings.Split(path, "/")
-
-	if len(components) < 6 {
-		badRequest(w, fmt.Sprintf("Invalid dependency path: %s\n", path))
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		writeError(w, err)
 		return
 	}
-
-	// ---
-
-	category := components[3]
-
-	if category != "releases" && category != "snapshots" {
-		badRequest(w, fmt.Sprintf("Invalid category, expect 'releases' or 'snapshots': %s\n", category))
-		return
-	}
-
-	// ---
-
-	dependencyPath := strings.Join(components[4:], "/")
-	latest, err1 := latestVersion(category, dependencyPath)
-
-	if err1 != nil {
-		writeError(w, err1)
-		return
-	}
-
-	if latest == "0" {
-		notFound(w, fmt.Sprintf("Dependency not found: %s/%s",
-			category, dependencyPath))
-		return
-	}
-
-	// ---
-
-	groupId := strings.Join(components[4:len(components)-1], ".")
-	artifactId := strings.Join(components[len(components)-1:], "")
-	
-	title := fmt.Sprintf("Entrepot - %s.%s", groupId, artifactId)
-	pomUrl := fmt.Sprintf("https://raw.githubusercontent.com/zengularity/entrepot/master/%s/%s/%s/%s-%s.pom", category, dependencyPath, latest, artifactId, latest)
-
-	// SBT
-	sbtArtifact := fmt.Sprintf(" % \"%s\"", artifactId)
-	underscore := strings.Index(artifactId, "_")
-	scalaVer := "<none>"
-
-	if underscore != -1 {
-		scalaVer = artifactId[underscore+1:]
-		sbtArtifact = fmt.Sprintf(
-			" %%%% \"%s\"", artifactId[:underscore])
-	}
-
-	sbtDependency := fmt.Sprintf("\"%s\"%s %% \"%s\"",
-		groupId, sbtArtifact, latest)
-
-	// Headers
-	w.WriteHeader(200)
-	w.Header().Add("Content-Type", "text/html")
-
-	fmt.Fprintf(w, `<!doctype html>
-<html lang="en">
-  <head>
-    <title>%s</title>
-
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.0/css/bootstrap.min.css" integrity="sha384-9gVQ4dYFwwWSjIDZnLEWnxCjeSWFphJiwGPXr1jddIhOegiu1FwO5qRGvFXOdJZ4" crossorigin="anonymous" />
-
-    <style type="text/css">
-#scalaVersion, #scalaVersion::before {
-  font-weight: bold
-}
-
-#scalaVersion::before {
-  content: 'Scala binary version: '
-}
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <h1>%s</h1>
-
-      <p>
-        <a id="pomUrl" href="%s">POM URL</a><br />
-        How to use Entrepot reposition: <a href="https://github.com/zengularity/entrepot/#usage">See documentation</a>
-      </p>
-
-      <hr />
-
-      <div id="sbt" class="card">
-        <h2 class="card-title">SBT</h2>
-        <p id="scalaVersion" class="card-subtitle">%s</p>
-        <pre class="card-text">%s</pre>
-      </div>
-
-      <div id="maven" class="card">
-        <h2 class="card-title">Maven</h2>
-        <pre class="card-text">&lt;dependency&gt;
-    &lt;groupId&gt;%s&lt;/groupId&gt;
-    &lt;artifactId&gt;%s&lt;/artifactId&gt;
-    &lt;version&gt;%s&lt;/version&gt;
-&lt;/dependency&gt;</pre>
-      </div>
-    </div>
-  </body>
-</html>`, title, title, pomUrl, scalaVer, sbtDependency,
-		groupId, artifactId, latest)
 }
 
 func notFound(w http.ResponseWriter, msg string) {

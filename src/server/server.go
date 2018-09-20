@@ -196,6 +196,10 @@ func latestVersion(
 		return "", err1
 	}
 
+	if githubResp.StatusCode != 200 {
+		return "", errors.New(githubResp.Status)
+	}
+
 	// ---
 
 	defer githubResp.Body.Close()
@@ -212,11 +216,15 @@ func latestVersion(
 	for dec.More() {
 		var info interface{}
 
+		fmt.Println("_1")
+
 		if err := dec.Decode(&info); err != nil {
 			return "", err
 		}
 
 		// ---
+
+		fmt.Printf("info = %s\n", info)
 
 		obj, ok := info.(map[string]interface{})
 
